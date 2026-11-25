@@ -11,15 +11,18 @@ import (
 
 	extensionscontroller "github.com/gardener/gardener/extensions/pkg/controller"
 	"github.com/gardener/gardener/extensions/pkg/controller/extension"
+	v1beta1helper "github.com/gardener/gardener/pkg/api/core/v1beta1/helper"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gardener/gardener/pkg/component"
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/gardener/gardener-extension-shoot-rsyslog-relp/imagevector"
 	apisconfig "github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/apis/config"
 	api "github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/apis/rsyslog"
+	"github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/apis/rsyslog/validation"
 	"github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/component/rsyslogrelpconfigcleaner"
 	"github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/constants"
 )
@@ -54,7 +57,60 @@ func (a *actuator) Reconcile(ctx context.Context, _ logr.Logger, ex *extensionsv
 		return fmt.Errorf("failed to decode provider config: %w", err)
 	}
 
+	cluster, err := extensionscontroller.GetCluster(ctx, a.client, namespace)
+	if err != nil {
+		return err
+	}
+
+	if cluster.Shoot == nil {
+		return errors.New("cluster.shoot is not yet populated")
+	}
+
+	if err := a.validateReferencedResources(ctx, cluster, namespace, rsyslogRelpConfig); err != nil {
+		return err
+	}
+
 	return deployMonitoringConfig(ctx, a.client, namespace, rsyslogRelpConfig.AuditConfig)
+}
+
+// validateReferencedResources re-validates the content of the resources referenced by the rsyslog relp configuration
+// (the TLS secret and the audit configMap). These resources are validated at Shoot admission time, but they can be
+// mutated afterwards. Re-validating them here ensures that invalid content never reaches the Shoot nodes and surfaces
+// as a LastError on the Shoot status.
+func (a *actuator) validateReferencedResources(ctx context.Context, cluster *extensionscontroller.Cluster, namespace string, rsyslogRelpConfig *api.RsyslogRelpConfig) error {
+	if rsyslogRelpConfig.TLS != nil && rsyslogRelpConfig.TLS.Enabled && rsyslogRelpConfig.TLS.SecretReferenceName != nil {
+		ref := v1beta1helper.GetResourceByName(cluster.Shoot.Spec.Resources, *rsyslogRelpConfig.TLS.SecretReferenceName)
+		if ref == nil || ref.ResourceRef.Kind != "Secret" {
+			return fmt.Errorf("failed to find referenced resource with name %s and kind Secret", *rsyslogRelpConfig.TLS.SecretReferenceName)
+		}
+
+		secret := &corev1.Secret{}
+		if err := extensionscontroller.GetObjectByReference(ctx, a.client, &ref.ResourceRef, namespace, secret); err != nil {
+			return fmt.Errorf("failed to read referenced secret for reference %s: %w", *rsyslogRelpConfig.TLS.SecretReferenceName, err)
+		}
+
+		if err := validation.ValidateRsyslogRelpSecret(secret); err != nil {
+			return err
+		}
+	}
+
+	if rsyslogRelpConfig.AuditConfig != nil && rsyslogRelpConfig.AuditConfig.Enabled && rsyslogRelpConfig.AuditConfig.ConfigMapReferenceName != nil {
+		ref := v1beta1helper.GetResourceByName(cluster.Shoot.Spec.Resources, *rsyslogRelpConfig.AuditConfig.ConfigMapReferenceName)
+		if ref == nil || ref.ResourceRef.Kind != "ConfigMap" {
+			return fmt.Errorf("failed to find referenced resource with name %s and kind ConfigMap", *rsyslogRelpConfig.AuditConfig.ConfigMapReferenceName)
+		}
+
+		configMap := &corev1.ConfigMap{}
+		if err := extensionscontroller.GetObjectByReference(ctx, a.client, &ref.ResourceRef, namespace, configMap); err != nil {
+			return fmt.Errorf("failed to read referenced configMap for reference %s: %w", *rsyslogRelpConfig.AuditConfig.ConfigMapReferenceName, err)
+		}
+
+		if err := validation.ValidateAuditConfigMap(a.decoder, configMap); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Delete deletes the extension resource.

@@ -185,6 +185,7 @@ var _ = Describe("Ensurer", func() {
 						Name:      "ref-rsyslog-tls",
 						Namespace: shootTechnicalID,
 					},
+					Immutable: new(true),
 					Data: map[string][]byte{
 						"ca":  []byte("ca"),
 						"crt": []byte("crt"),
@@ -218,6 +219,33 @@ var _ = Describe("Ensurer", func() {
 				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(Succeed())
 				Expect(files).To(ConsistOf(expectedFiles))
 			})
+
+			It("should fail when the referenced secret is not immutable", func() {
+				secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ref-rsyslog-tls", Namespace: shootTechnicalID}}
+				Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
+				secret.Immutable = new(false)
+				Expect(fakeClient.Update(ctx, secret)).To(Succeed())
+
+				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(MatchError(ContainSubstring("must be immutable")))
+			})
+
+			It("should fail when the referenced secret is missing a required data entry", func() {
+				secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ref-rsyslog-tls", Namespace: shootTechnicalID}}
+				Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
+				delete(secret.Data, "key")
+				Expect(fakeClient.Update(ctx, secret)).To(Succeed())
+
+				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(MatchError(ContainSubstring("is missing key value")))
+			})
+
+			It("should fail when the referenced secret has too many data entries", func() {
+				secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ref-rsyslog-tls", Namespace: shootTechnicalID}}
+				Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
+				secret.Data["extra"] = []byte("extra")
+				Expect(fakeClient.Update(ctx, secret)).To(Succeed())
+
+				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(MatchError(ContainSubstring("should have only three data entries")))
+			})
 		})
 
 		Context("when audit rules are specified via a configmap reference", func() {
@@ -237,6 +265,7 @@ var _ = Describe("Ensurer", func() {
 						Name:      "ref-audit-rules",
 						Namespace: shootTechnicalID,
 					},
+					Immutable: new(true),
 					Data: map[string]string{
 						"auditd": `apiVersion: rsyslog-relp.extensions.gardener.cloud/v1alpha1
 kind: Auditd
@@ -269,6 +298,43 @@ auditRules: |
 			It("should add additional files to current ones", func() {
 				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(Succeed())
 				Expect(files).To(ConsistOf(expectedFiles))
+			})
+
+			It("should fail when the referenced configMap is not immutable", func() {
+				configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ref-audit-rules", Namespace: shootTechnicalID}}
+				Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)).To(Succeed())
+				configMap.Immutable = new(false)
+				Expect(fakeClient.Update(ctx, configMap)).To(Succeed())
+
+				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(MatchError(ContainSubstring("must be immutable")))
+			})
+
+			It("should fail when the referenced configMap has more than one entry", func() {
+				configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ref-audit-rules", Namespace: shootTechnicalID}}
+				Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)).To(Succeed())
+				configMap.Data["extra"] = "extra"
+				Expect(fakeClient.Update(ctx, configMap)).To(Succeed())
+
+				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(MatchError(ContainSubstring("should have only one entry")))
+			})
+
+			It("should fail when the referenced configMap has an empty auditd config", func() {
+				configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ref-audit-rules", Namespace: shootTechnicalID}}
+				Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)).To(Succeed())
+				configMap.Data["auditd"] = ""
+				Expect(fakeClient.Update(ctx, configMap)).To(Succeed())
+
+				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(MatchError(ContainSubstring("empty auditd config")))
+			})
+
+			It("should fail when the referenced configMap contains audit config without any audit rules", func() {
+				configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ref-audit-rules", Namespace: shootTechnicalID}}
+				Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)).To(Succeed())
+				configMap.Data["auditd"] = `apiVersion: rsyslog-relp.extensions.gardener.cloud/v1alpha1
+kind: Auditd`
+				Expect(fakeClient.Update(ctx, configMap)).To(Succeed())
+
+				Expect(ensurer.EnsureAdditionalFiles(ctx, gctx, &files, nil)).To(MatchError(ContainSubstring("auditRules must not be empty")))
 			})
 		})
 

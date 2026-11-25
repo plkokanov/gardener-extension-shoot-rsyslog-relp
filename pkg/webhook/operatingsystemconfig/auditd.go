@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/apis/rsyslog"
+	"github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/apis/rsyslog/validation"
 	"github.com/gardener/gardener-extension-shoot-rsyslog-relp/pkg/constants"
 )
 
@@ -63,6 +64,10 @@ func getAuditConfigFromConfigMap(ctx context.Context, c client.Client, decoder r
 	}
 	if err := extensionscontroller.GetObjectByReference(ctx, c, &ref.ResourceRef, namespace, refConfigMap); err != nil {
 		return nil, fmt.Errorf("failed to read referenced configMap %s%s for reference %s", v1beta1constants.ReferencedResourcesPrefix, ref.ResourceRef.Name, configMapRefName)
+	}
+
+	if err := validation.ValidateAuditConfigMap(decoder, refConfigMap); err != nil {
+		return nil, err
 	}
 
 	auditdConfigString, ok := refConfigMap.Data[constants.AuditdConfigMapDataKey]
