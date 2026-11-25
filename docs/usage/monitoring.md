@@ -124,9 +124,14 @@ Shows whether the `augenrules --load` command was executed successfully or not o
 - Type: Gauge
 - Labels: `node`
 
+#### rsyslog_auditd_loaded_rules
+Shows the number of audit rules that are loaded in the kernel on the node, as reported by `auditctl -l`. A value of `0` means that no audit rules are active even though audit rule configuration is enabled - note that `augenrules --load` can succeed while loading an effectively empty ruleset (for example one that only contains `-D`), so this metric complements `rsyslog_augenrules_load_success` by reflecting the actual effective audit state.
+- Type: Gauge
+- Labels: `node`
+
 ## Alerts
 
-There are three alerts defined for the `rsyslog` service in the Shoot's Prometheus instance:
+There are four alerts defined for the `rsyslog` service in the Shoot's Prometheus instance:
 
 #### RsyslogTooManyRelpActionFailures
 This indicates that the cumulative failure rate in processing `relp` action messages is greater than 2%. In other words, it compares the rate of processed `relp` action messages to the rate of failed `relp` action messages and fires an alert when the following expression evaluates to true:
@@ -147,6 +152,13 @@ This indicates that `augenrules --load` was not executed successfully when calle
 
 ```
 absent(rsyslog_augenrules_load_success == 1)
+```
+
+#### RsyslogRelpNoAuditRulesLoaded
+This indicates that no audit rules are loaded in the kernel on the Shoot nodes (`auditctl -l` reports none) even though audit rule configuration is enabled, which means node auditing is effectively disabled. This can happen when `augenrules --load` succeeds but the configured ruleset is effectively empty or only deletes rules (for example one that only contains `-D`). You should check that the `auditd` configuration you provided actually defines audit rules. An alert is fired when the following expression evaluates to true:
+
+```
+absent(rsyslog_auditd_loaded_rules > 0)
 ```
 
 Users can subscribe to these alerts by following the Gardener [alerting guide](https://github.com/gardener/gardener/blob/master/docs/monitoring/alerting.md#alerting-for-users).

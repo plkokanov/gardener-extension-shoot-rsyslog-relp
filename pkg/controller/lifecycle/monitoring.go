@@ -87,6 +87,20 @@ func deployMonitoringConfig(ctx context.Context, c client.Client, namespace stri
 				"description": "The rsyslog augenrules load success is 0 meaning that there was an error when calling 'augenrules --load' on the Shoot nodes",
 				"summary":     "Rsyslog augenrules load success is 0",
 			},
+		}, monitoringv1.Rule{
+			Alert: "RsyslogRelpNoAuditRulesLoaded",
+			Expr:  intstr.FromString(`absent(rsyslog_auditd_loaded_rules > 0)`),
+			For:   new(monitoringv1.Duration("15m")),
+			Labels: map[string]string{
+				"service":    "rsyslog-relp",
+				"severity":   "warning",
+				"type":       "shoot",
+				"visibility": "all",
+			},
+			Annotations: map[string]string{
+				"description": "No audit rules are loaded in the kernel on the Shoot nodes ('auditctl -l' reports none) although auditd rule configuration is enabled, so node auditing is effectively disabled.",
+				"summary":     "Rsyslog auditd has no audit rules loaded",
+			},
 		})
 	}
 

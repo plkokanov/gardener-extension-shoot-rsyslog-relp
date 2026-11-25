@@ -35,7 +35,7 @@ function remove_auditd_config() {
 }
 
 function configure_auditd() {
-  if [[ ! -d {{ .pathAuditRulesFromOSCDir }} ]] || [ -z "$( ls -A '{{ .pathAuditRulesFromOSCDir }}' )" ] ; then
+  if [[ ! -d {{ .pathAuditRulesFromOSCDir }} ]] || [ -z "$(ls -A '{{ .pathAuditRulesFromOSCDir }}')" ]; then
     remove_auditd_config
     return 0
   fi
@@ -49,7 +49,7 @@ function configure_auditd() {
   if [[ ! -d {{ .pathAuditRulesDir }} ]]; then
     mkdir -p {{ .pathAuditRulesDir }}
   fi
-  if ! diff -rq {{ .pathAuditRulesFromOSCDir }} {{ .pathAuditRulesDir }} ; then
+  if ! diff -rq {{ .pathAuditRulesFromOSCDir }} {{ .pathAuditRulesDir }}; then
     rm -rf {{ .pathAuditRulesDir }}/*
     cp -fL {{ .pathAuditRulesFromOSCDir }}/* {{ .pathAuditRulesDir }}/
 
@@ -66,15 +66,22 @@ function configure_auditd() {
     fi
 
     augenrules_load_metric="# HELP rsyslog_augenrules_load_success shows whether the 'augenrules --load' command was executed successfully or not.\n# TYPE rsyslog_augenrules_load_success gauge\nrsyslog_augenrules_load_success"
-    error=$(augenrules --load 2>&1 > /dev/null)
-    # Writing to the output ".prom" file has to be done with an atomic operation. This is why we first write to a temporary file
-    # and then we move/rename the temporary file to the actual output file.
+    error=$(augenrules --load 2>&1 >/dev/null)
     if [[ -n "$error" ]]; then
       logger -p error "Error loading audit rules: $error"
-      echo -e "${augenrules_load_metric} 0" > "${auditd_metrics_file}.tmp"
+      augenrules_load_success=0
     else
-      echo -e "${augenrules_load_metric} 1" > "${auditd_metrics_file}.tmp"
+      augenrules_load_success=1
     fi
+
+    # Count the audit rules that are actually loaded in the kernel as reported by 'auditctl -l'. A successful
+    # 'augenrules --load' does not guarantee that any rules are active.
+    loaded_rules=$(auditctl -l 2>/dev/null | grep -cve '^No rules$' -e '^$' || true)
+    loaded_rules_metric="# HELP rsyslog_auditd_loaded_rules shows the number of audit rules that are loaded in the kernel as reported by 'auditctl -l'.\n# TYPE rsyslog_auditd_loaded_rules gauge\nrsyslog_auditd_loaded_rules"
+
+    # Writing to the output ".prom" file has to be done with an atomic operation. This is why we first write to a temporary file
+    # and then we move/rename the temporary file to the actual output file.
+    echo -e "${augenrules_load_metric} ${augenrules_load_success}\n${loaded_rules_metric} ${loaded_rules}" >"${auditd_metrics_file}.tmp"
     mv "${auditd_metrics_file}.tmp" "${auditd_metrics_file}"
   fi
 
@@ -82,14 +89,14 @@ function configure_auditd() {
   if [[ -f {{ .audispSyslogPluginPath }} ]]; then
     path_syslog_audit_plugin={{ .audispSyslogPluginPath }}
   fi
-  if [[ -f "$path_syslog_audit_plugin" ]] && \
-      grep -m 1 -qie  "^active\\>" "$path_syslog_audit_plugin" && \
-      ! grep -m 1 -qie "^active\\> = yes" "$path_syslog_audit_plugin" ; then
+  if [[ -f "$path_syslog_audit_plugin" ]] &&
+    grep -m 1 -qie "^active\\>" "$path_syslog_audit_plugin" &&
+    ! grep -m 1 -qie "^active\\> = yes" "$path_syslog_audit_plugin"; then
     sed -i "s/^active\\>.*/active = yes/i" "$path_syslog_audit_plugin"
     restart_auditd=true
   fi
 
-  if ! systemctl is-active --quiet auditd.service ; then
+  if ! systemctl is-active --quiet auditd.service; then
     # Ensure that the auditd service is running.
     systemctl start auditd.service
   elif [ "${restart_auditd}" = true ]; then
@@ -98,11 +105,11 @@ function configure_auditd() {
 
   # If the `systemd-journald-audit.socket` socket exists and is enabled, then journald also fetches audit logs from it.
   # To avoid duplication we disable it and only rely on the syslog audit plugin.
-  if systemctl list-unit-files systemd-journald-audit.socket > /dev/null ; then
-    if systemctl is-enabled --quiet systemd-journald-audit.socket ; then
+  if systemctl list-unit-files systemd-journald-audit.socket >/dev/null; then
+    if systemctl is-enabled --quiet systemd-journald-audit.socket; then
       systemctl disable systemd-journald-audit.socket
     fi
-    if systemctl is-active --quiet systemd-journald-audit.socket ; then
+    if systemctl is-active --quiet systemd-journald-audit.socket; then
       systemctl stop systemd-journald-audit.socket
       systemctl restart systemd-journald
     fi
@@ -111,7 +118,7 @@ function configure_auditd() {
 
 function configure_rsyslog() {
   # Enable the rsyslog service so that necessary symlinks can be created under /etc/systemd/system (e.g. /etc/systemd/system/syslog.service)
-  if ! systemctl is-enabled --quiet rsyslog.service ; then
+  if ! systemctl is-enabled --quiet rsyslog.service; then
     systemctl enable rsyslog.service
   fi
 
@@ -121,16 +128,16 @@ function configure_rsyslog() {
 
   restart_rsyslog=false
 
-  if [[ ! -f {{ .pathRsyslogAuditConf }} ]] || ! diff -rq {{ .pathRsyslogAuditConfFromOSC }} {{ .pathRsyslogAuditConf }} ; then
+  if [[ ! -f {{ .pathRsyslogAuditConf }} ]] || ! diff -rq {{ .pathRsyslogAuditConfFromOSC }} {{ .pathRsyslogAuditConf }}; then
     cp -fL {{ .pathRsyslogAuditConfFromOSC }} {{ .pathRsyslogAuditConf }}
     restart_rsyslog=true
   fi
 
-  if [[ -d {{ .pathRsyslogTLSFromOSCDir }} ]] && [[ -n "$(ls -A "{{ .pathRsyslogTLSFromOSCDir }}" )" ]]; then
+  if [[ -d {{ .pathRsyslogTLSFromOSCDir }} ]] && [[ -n "$(ls -A "{{ .pathRsyslogTLSFromOSCDir }}")" ]]; then
     if [[ ! -d {{ .pathRsyslogTLSDir }} ]]; then
       mkdir -p {{ .pathRsyslogTLSDir }}
     fi
-    if ! diff -rq {{ .pathRsyslogTLSFromOSCDir }} {{ .pathRsyslogTLSDir }} ; then
+    if ! diff -rq {{ .pathRsyslogTLSFromOSCDir }} {{ .pathRsyslogTLSDir }}; then
       rm -rf {{ .pathRsyslogTLSDir }}/*
       cp -fL {{ .pathRsyslogTLSFromOSCDir }}/* {{ .pathRsyslogTLSDir }}/
       restart_rsyslog=true
@@ -139,7 +146,7 @@ function configure_rsyslog() {
     rm -rf {{ .pathRsyslogTLSDir }}
   fi
 
-  if ! systemctl is-active --quiet rsyslog.service ; then
+  if ! systemctl is-active --quiet rsyslog.service; then
     # Ensure that the rsyslog service is running.
     systemctl start rsyslog.service
   elif [ "${restart_rsyslog}" = true ]; then
@@ -147,14 +154,14 @@ function configure_rsyslog() {
   fi
 }
 
-if systemctl list-unit-files auditd.service > /dev/null; then
+if systemctl list-unit-files auditd.service >/dev/null; then
   echo "Configuring auditd.service ..."
   configure_auditd
 else
   echo "auditd.service is not installed, skipping configuration"
 fi
 
-if systemctl list-unit-files rsyslog.service > /dev/null; then
+if systemctl list-unit-files rsyslog.service >/dev/null; then
   echo "Configuring rsyslog.service ..."
   configure_rsyslog
 else
