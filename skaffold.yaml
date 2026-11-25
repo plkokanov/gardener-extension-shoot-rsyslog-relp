@@ -39,6 +39,7 @@ build:
             - pkg/apis/rsyslog
             - pkg/apis/rsyslog/install
             - pkg/apis/rsyslog/v1alpha1
+            - pkg/apis/rsyslog/validation
             - pkg/cmd/rsyslogrelp
             - pkg/component/rsyslogrelpconfigcleaner
             - pkg/constants
